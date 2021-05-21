@@ -28,6 +28,9 @@
 #include "trinity.h"	// ARRAY_SIZE
 #include "uid.h"
 #include "utils.h"	// zmalloc
+#ifdef ENABLE_KCOV
+#include "kcov.h"  // KCOV
+#endif
 
 /*
  * Provide temporary immunity from the reaper
@@ -237,6 +240,11 @@ static void init_child(struct childdata *child, int childno)
 		unshare(CLONE_NEWNET);
 	}
 
+#ifdef ENABLE_KCOV
+	init_kcov();  // Defer `enable_kcov` because we don't want to overflow the buffer now
+	connect_cov_server();
+#endif
+
 /*
 	if (shm->unshare_perm_err == FALSE) {
 		if (RAND_BOOL()) {
@@ -443,6 +451,11 @@ void child_process(struct childdata *child, int childno)
 	}
 
 out:
+#ifdef ENABLE_KCOV
+	disconnect_cov_server();
+	shutdown_kcov();
+#endif
+
 	shutdown_child_logging(child);
 
 	debugf("child %d %d exiting.\n", childno, getpid());

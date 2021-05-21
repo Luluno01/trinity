@@ -22,6 +22,9 @@
 #include "syscall.h"
 #include "tables.h"
 #include "trinity.h"
+#ifdef ENABLE_KCOV
+#include "kcov.h"
+#endif
 
 /*
  * This function decides if we're going to be doing a 32bit or 64bit syscall.
@@ -130,7 +133,16 @@ bool random_syscall(struct childdata *child)
 
 	output_syscall_prefix(rec);
 
+#ifdef ENABLE_KCOV
+	start_kcov();
+#endif
+
 	do_syscall(rec);
+
+#ifdef ENABLE_KCOV
+	stop_kcov();
+	// TODO: send coverage
+#endif
 
 	output_syscall_postfix(rec);
 

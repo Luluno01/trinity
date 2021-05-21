@@ -8,6 +8,19 @@
 
 void init_kcov(void);
 void enable_kcov(void);
+void reset_kcov(void);
 void dump_kcov_buffer(void);
 void disable_kcov(void);
+void start_kcov(void);
+void stop_kcov(void);
 void shutdown_kcov(void);
+
+void connect_cov_server(void);
+void disconnect_cov_server(void);
+
+extern int kcovfd;
+extern unsigned long last_cover_count;
+extern unsigned long last_cover[];
+
+extern struct sockaddr_in cov_server;
+extern int cov_server_sock;

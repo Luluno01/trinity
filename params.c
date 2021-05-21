@@ -5,6 +5,9 @@
 #include <getopt.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifdef ENABLE_KCOV
+#include <arpa/inet.h>  // struct in_addr
+#endif
 
 #include "bdevs.h"
 #include "child.h"
@@ -18,6 +21,9 @@
 #include "tables.h"
 #include "taint.h"
 #include "trinity.h"	// progname
+#ifdef ENABLE_KCOV
+#include "kcov.h"
+#endif
 
 bool set_debug = FALSE;
 bool do_specific_syscall = FALSE;
@@ -70,6 +76,9 @@ void enable_disable_fd_usage(void)
 static void usage(void)
 {
 	outputerr("%s\n", progname);
+#ifdef ENABLE_KCOV
+	outputerr(" --cov-server,-k: specify coverage server to connect to.\n");
+#endif
 	outputerr(" --arch, -a: selects syscalls for the specified architecture (32 or 64). Both by default.\n");
 	outputerr(" --bdev, -b <node>:  Add /dev node to list of block devices to use for destructive tests..\n");
 	outputerr(" --children,-C: specify number of child processes\n");
@@ -98,9 +107,16 @@ static void usage(void)
 	exit(EXIT_SUCCESS);
 }
 
+#ifdef ENABLE_KCOV
+static const char paramstr[] = "k:a:b:c:C:dDE:g:hIl:LN:P:qr:s:ST:V:vx:X";
+#else
 static const char paramstr[] = "a:b:c:C:dDE:g:hIl:LN:P:qr:s:ST:V:vx:X";
+#endif
 
 static const struct option longopts[] = {
+#ifdef ENABLE_KCOV
+	{ "cov-server", required_argument, NULL, 'k' },
+#endif
 	{ "arch", required_argument, NULL, 'a' },
 	{ "bdev", required_argument, NULL, 'b' },
 	{ "children", required_argument, NULL, 'C' },
@@ -156,6 +172,10 @@ void parse_args(int argc, char *argv[])
 {
 	int opt;
 	int opt_index = 0;
+#ifdef ENABLE_KCOV
+	char *host_port = NULL;
+	int port = 0;
+#endif
 
 	while ((opt = getopt_long(argc, argv, paramstr, longopts, &opt_index)) != -1) {
 		switch (opt) {
@@ -165,6 +185,31 @@ void parse_args(int argc, char *argv[])
 			else
 				outputstd("opt:%c\n", opt);
 			return;
+
+#ifdef ENABLE_KCOV
+		case 'k':
+			host_port = strtok(optarg, ":");
+			if (!host_port) {
+				outputstd("invalid argument value for --cov-server (example: 127.0.0.1:12333)");
+				exit(EXIT_FAILURE);
+			}
+			if (inet_aton(host_port, &cov_server.sin_addr) == 0) {
+				outputstd("invalid host name for --cov-server (example: 127.0.0.1:12333)");
+				exit(EXIT_FAILURE);
+			}
+			host_port = strtok(NULL, ":");
+			if (!host_port) {
+				outputstd("invalid argument value for --cov-server (example: 127.0.0.1:12333)");
+				exit(EXIT_FAILURE);
+			}
+			port = strtoll(host_port, NULL, 10);
+			if (port < 1 || port > 65535) {
+				outputstd("invalid port number for --cov-server (example: 127.0.0.1:12333)");
+				exit(EXIT_FAILURE);
+			}
+			cov_server.sin_port = htons(port);
+			break;
+#endif
 
 		case 'a':
 			/* One of the architectures selected*/
@@ -341,5 +386,12 @@ void parse_args(int argc, char *argv[])
 
 	quiet_level = MAX_LOGLEVEL - quiet_level;
 
+#ifdef ENABLE_KCOV
+	if (cov_server.sin_port == 0) {
+		outputstd("--cov-server is required (example: 127.0.0.1:12333).\n");
+		exit(EXIT_FAILURE);
+	}
+	output(1, "Coverage server is at %s:%hu.\n", inet_ntoa(cov_server.sin_addr), ntohs(cov_server.sin_port));
+#endif
 	output(1, "Done parsing arguments.\n");
 }

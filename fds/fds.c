@@ -14,6 +14,9 @@
 #include "shm.h"
 #include "trinity.h"
 #include "utils.h"
+#ifdef ENABLE_KCOV
+#include "kcov.h"
+#endif
 
 static unsigned int num_fd_providers;			// num in list.
 static unsigned int num_fd_providers_to_enable = 0;	// num of --fd-enable= params
@@ -151,7 +154,12 @@ regen:
 	} else
 		shm->fd_lifetime--;
 
-	if (shm->current_fd == 0) {
+	if (shm->current_fd == 0
+#ifdef ENABLE_KCOV
+			|| shm->current_fd == kcovfd
+			|| shm->current_fd == cov_server_sock
+#endif
+	) {
 		shm->fd_lifetime = 0;
 		goto regen;
 	}
