@@ -694,7 +694,7 @@ static void print_stats(void)
 #endif
 
 		if (shm->stats.op_count - lastcount > 10000 || \
-				tp.tv_nsec - lastreport > 60 /* Report at least once per 60s */) {
+				tp.tv_sec - lastreport > 60 /* Report at least once per 60s */) {
 			char stalltxt[]=" STALLED:XXXX";
 
 			if (stall_count > 0 && stall_count < 10000)
