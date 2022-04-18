@@ -1,4 +1,4 @@
-VERSION="2019.06"
+VERSION="2021.10"
 
 INSTALL_PREFIX ?= $(DESTDIR)
 INSTALL_PREFIX ?= $(HOME)
@@ -20,7 +20,6 @@ ifneq ($(SYSROOT),)
 CFLAGS += --sysroot=$(SYSROOT)
 endif
 #CFLAGS += $(shell if $(CC) -m32 -S -o /dev/null -xc /dev/null >/dev/null 2>&1; then echo "-m32"; fi)
-CFLAGS += -Wdeclaration-after-statement
 CFLAGS += -Wformat=2
 CFLAGS += -Winit-self
 CFLAGS += -Wnested-externs
