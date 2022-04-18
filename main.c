@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 
 #include "child.h"
 #include "debug.h"
@@ -675,18 +676,28 @@ static void print_stats(void)
 {
 	if (shm->stats.op_count > 1) {
 		static unsigned long lastcount = 0;
+		static time_t lastreport = 0;  // Last report time in seconds
+		struct timespec tp;
+#ifdef CLOCK_MONOTONIC_COARSE
+		clock_gettime(CLOCK_MONOTONIC_COARSE, &tp);
+#else
+		clock_gettime(CLOCK_MONOTONIC, &tp);
+#endif
 
-		if (shm->stats.op_count - lastcount > 10000) {
+		if (shm->stats.op_count - lastcount > 10000 || \
+				tp.tv_nsec - lastreport > 60 /* Report at least once per 60s */) {
 			char stalltxt[]=" STALLED:XXXX";
 
 			if (stall_count > 0)
 				sprintf(stalltxt, " STALLED:%u", stall_count);
-			output(0, "%ld iterations. [F:%ld S:%ld HI:%ld%s]\n",
+			output(0, "[%llu.%u] %ld iterations. [F:%ld S:%ld HI:%ld%s]\n",
+				tp.tv_sec, tp.tv_nsec,
 				shm->stats.op_count,
 				shm->stats.failures, shm->stats.successes,
 				hiscore,
 				stall_count ? stalltxt : "");
 			lastcount = shm->stats.op_count;
+			lastreport = tp.tv_sec;
 		}
 	}
 }
