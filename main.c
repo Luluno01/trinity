@@ -335,12 +335,50 @@ static void stuck_syscall_info(struct childdata *child)
 		dump_pid_stack(pid);
 }
 
+enum childprogress {
+	/**
+	 * @brief Child is not making progress
+	 * 
+	 */
+	NO_PROGRESS = 0,
+	/**
+	 * @brief Empty slot, not forked yet
+	 * 
+	 */
+	EMPTY_SLOT,
+	/**
+	 * @brief The syscall record is locked by the child
+	 * 
+	 */
+	CANNOT_LOCK,
+	/**
+	 * @brief The state of the syscall record < BEFORE
+	 * 
+	 */
+	BEFORE_BEFORE,
+	/**
+	 * @brief The child has a 0 timestamp
+	 * 
+	 */
+	ZERO_TIMESTAMP,
+	/**
+	 * @brief The syscall is just called for no more than 30 seconds
+	 * 
+	 */
+	NOT_YET_30_SEC,
+	/**
+	 * @brief Sentinel
+	 * 
+	 */
+	MAX_PROGRESS,
+};
+
 /*
  * Check that a child is making forward progress by comparing the timestamps it
  * recorded before making its last syscall.
  * If no progress is being made, send SIGKILLs to it.
  */
-static bool is_child_making_progress(struct childdata *child)
+static enum childprogress is_child_making_progress(struct childdata *child)
 {
 	struct syscallrecord *rec;
 	struct timespec tp;
@@ -351,16 +389,16 @@ static bool is_child_making_progress(struct childdata *child)
 	pid = pids[child->num];
 
 	if (pid == EMPTY_PIDSLOT)
-		return TRUE;
+		return EMPTY_SLOT;
 	// bail if we've not done a syscall yet, we probably just haven't
 	// been scheduled due to other pids hogging the cpu
 	rec = &child->syscall;
 	if (trylock(&rec->lock) == FALSE)
-		return TRUE;
+		return CANNOT_LOCK;
 
 	if (rec->state < BEFORE) {
 		unlock(&rec->lock);
-		return TRUE;
+		return BEFORE_BEFORE;
 	}
 	unlock(&rec->lock);
 
@@ -368,7 +406,7 @@ static bool is_child_making_progress(struct childdata *child)
 
 	/* haven't done anything yet. */
 	if (old == 0)
-		return TRUE;
+		return ZERO_TIMESTAMP;
 
 	clock_gettime(CLOCK_MONOTONIC, &tp);
 	now = tp.tv_sec;
@@ -380,13 +418,13 @@ static bool is_child_making_progress(struct childdata *child)
 
 	/* hopefully the common case. */
 	if (diff < 30)
-		return TRUE;
+		return NOT_YET_30_SEC;
 
 	/* if we're blocked in uninteruptible sleep, SIGKILL won't help. */
 	state = get_pid_state(child);
 	if (state == 'D') {
 		//debugf("child %d (pid %u) is blocked in D state\n", child->num, pid);
-		return FALSE;
+		return NO_PROGRESS;
 	}
 
 	/* After 30 seconds of no progress, send a kill signal. */
@@ -400,14 +438,14 @@ static bool is_child_making_progress(struct childdata *child)
 
 	/* if we're still around after 40s, repeatedly send SIGKILLs every second. */
 	if (diff < 40)
-		return FALSE;
+		return NO_PROGRESS;
 
 	debugf("sending another SIGKILL to child %u (pid:%u). [kill count:%u] [diff:%lu]\n",
 		child->num, pid, child->kill_count, diff);
 	child->kill_count++;
 	kill_pid(pid);
 
-	return FALSE;
+	return NO_PROGRESS;
 }
 
 /*
@@ -659,26 +697,85 @@ static void handle_children(void)
 	}
 }
 
-static unsigned int stall_count;
+/* Progress checking */
+static unsigned int progress_counts[MAX_PROGRESS] = {
+	[NO_PROGRESS] = 0,
+	[EMPTY_SLOT] = 0,
+	[CANNOT_LOCK] = 0,
+	[BEFORE_BEFORE] = 0,
+	[ZERO_TIMESTAMP] = 0,
+	[NOT_YET_30_SEC] = 0
+};
+#define stall_count (progress_counts[NO_PROGRESS])
+/* The ops report control (don't want duplicated checking) */
 
 static void check_children_progressing(void)
 {
 	unsigned int i;
 
 	stall_count = 0;
+	progress_counts[EMPTY_SLOT] = 0;
+	progress_counts[CANNOT_LOCK] = 0;
+	progress_counts[BEFORE_BEFORE] = 0;
+	progress_counts[ZERO_TIMESTAMP] = 0;
+	progress_counts[NOT_YET_30_SEC] = 0;
+
+	bool all_stalled = FALSE;
 
 	for_each_child(i) {
 		struct childdata *child = shm->children[i];
 
-		if (is_child_making_progress(child) == FALSE)
-			stall_count++;
+		enum childprogress prog = is_child_making_progress(child);
+		if (prog < 0 || prog >= MAX_PROGRESS)
+			panic(EXIT_IMPOSSIBLE);
 
 		if (child->op_nr > hiscore)
 			hiscore = child->op_nr;
 	}
 
-	if (stall_count == shm->running_childs)
+	if (stall_count == shm->running_childs) {
+		output(0, "All children are stalled. Randomly kill a few.\n");
+		all_stalled = TRUE;
 		stall_genocide();
+	}
+
+  /* Ops-based stall checking (because the code above may still miss some
+	unknown cases) */
+	static unsigned long lastcount = 0;
+	static time_t lasttime = 0;
+	struct timespec tp;
+#ifdef CLOCK_MONOTONIC_COARSE
+	clock_gettime(CLOCK_MONOTONIC_COARSE, &tp);
+#else
+	clock_gettime(CLOCK_MONOTONIC, &tp);
+#endif
+
+	time_t time_diff = tp.tv_sec - lasttime;  // Time since last progress made
+	if (shm->stats.op_count != lastcount) {
+		// Good, at least it is changing
+		// Save this checkpoint
+		lastcount = shm->stats.op_count;
+		lasttime = tp.tv_sec;
+	} else if (time_diff >= 60 && all_stalled == FALSE) {
+		// Indeed stalled for 60s, but `is_child_making_progress` said no
+		// This is likely a bug of Trinity, or we trigerred some kernel bug
+		output(0, "Children is making 0 progress for 60 seconds, "
+			"but we only have %u stalled process(es), and\n"
+			"  %u empty slot(s)\n"
+			"  %u process(es) that can't be locked\n"
+			"  %u process(es) that not yet reached BEFORE state\n"
+			"  %u process(es) reporting 0 timestamp(s)\n"
+			"  %u process(es) magically said to have just issued a syscall for "
+			"less then 30 seconds\n", progress_counts[NO_PROGRESS],
+			progress_counts[EMPTY_SLOT],
+			progress_counts[CANNOT_LOCK],
+			progress_counts[BEFORE_BEFORE],
+			progress_counts[ZERO_TIMESTAMP],
+			progress_counts[NOT_YET_30_SEC]);
+		panic(EXIT_POSSIBLE_BUG);
+	}
+	/* Otherwise, 0 new ops but 1) not yet 60 seconds, or 2) stall is detected by
+	`is_child_making_progress` normally, do nothing */
 }
 
 static void print_stats(void)
@@ -693,8 +790,10 @@ static void print_stats(void)
 		clock_gettime(CLOCK_MONOTONIC, &tp);
 #endif
 
-		if (shm->stats.op_count - lastcount > 10000 || \
-				tp.tv_sec - lastreport > 60 /* Report at least once per 60s */) {
+		unsigned long newops = shm->stats.op_count - lastcount;
+		if (newops > 10000 || \
+				/* Report at least once per 60s, but keep silent if little progress */
+				newops > 30 && tp.tv_sec - lastreport > 60) {
 			char stalltxt[]=" STALLED:XXXX";
 
 			if (stall_count > 0 && stall_count < 10000)
