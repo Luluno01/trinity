@@ -105,12 +105,12 @@ int main(int argc, char* argv[])
 {
 	int ret = EXIT_SUCCESS;
 	const char taskname[13]="trinity-main";
-	struct timespec starttime;
-	clock_gettime(CLOCK_MONOTONIC, &starttime);
+	struct timespec uptime;
+	clock_gettime(CLOCK_MONOTONIC, &uptime);
 
 	outputstd("Trinity " VERSION "  Dave Jones <davej@codemonkey.org.uk>\n");
 
-	outputstd("Start time: %llu.%u\n", starttime.tv_sec, starttime.tv_nsec);
+	outputstd("Start time: %llu.%u\n", uptime.tv_sec, uptime.tv_nsec);
 
 	progname = argv[0];
 
@@ -200,7 +200,9 @@ int main(int argc, char* argv[])
 	if (is_tainted() == TRUE)
 		stop_ftrace();
 
-	output(0, "Ran %ld syscalls. Successes: %ld  Failures: %ld\n",
+  clock_gettime(CLOCK_MONOTONIC, &uptime);
+	output(0, "[%llu.%u] Ran %ld syscalls. Successes: %ld  Failures: %ld\n",
+		uptime.tv_sec, uptime.tv_nsec,
 		shm->stats.op_count, shm->stats.successes, shm->stats.failures);
 	if (show_stats == TRUE)
 		dump_stats();
