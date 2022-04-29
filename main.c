@@ -728,6 +728,7 @@ static void check_children_progressing(void)
 		enum childprogress prog = is_child_making_progress(child);
 		if (prog < 0 || prog >= MAX_PROGRESS)
 			panic(EXIT_IMPOSSIBLE);
+		progress_counts[prog]++;
 
 		if (child->op_nr > hiscore)
 			hiscore = child->op_nr;
