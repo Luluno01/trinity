@@ -794,7 +794,7 @@ static void print_stats(void)
 		unsigned long newops = shm->stats.op_count - lastcount;
 		if (newops > 10000 || \
 				/* Report at least once per 60s, but keep silent if little progress */
-				newops > 30 && tp.tv_sec - lastreport > 60) {
+				(newops > 30 && tp.tv_sec - lastreport > 60)) {
 			char stalltxt[]=" STALLED:XXXX";
 
 			if (stall_count > 0 && stall_count < 10000)

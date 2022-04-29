@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "arch.h"
 #include "fd.h"
@@ -83,6 +84,8 @@ static int set_exit_code(enum exit_reasons reason)
 	case EXIT_FORK_FAILURE:
 	case EXIT_FD_INIT_FAILURE:
 	case EXIT_LOGFILE_OPEN_ERROR:
+	case EXIT_IMPOSSIBLE:
+	case EXIT_POSSIBLE_BUG:
 		ret = EXIT_FAILURE;
 		break;
 
