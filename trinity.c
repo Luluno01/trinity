@@ -105,8 +105,12 @@ int main(int argc, char* argv[])
 {
 	int ret = EXIT_SUCCESS;
 	const char taskname[13]="trinity-main";
+	struct timespec starttime;
+	clock_gettime(CLOCK_MONOTONIC, &starttime);
 
 	outputstd("Trinity " VERSION "  Dave Jones <davej@codemonkey.org.uk>\n");
+
+	outputstd("Start time: %llu.%u\n", starttime.tv_sec, starttime.tv_nsec);
 
 	progname = argv[0];
 
