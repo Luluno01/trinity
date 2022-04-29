@@ -757,10 +757,10 @@ static void check_children_progressing(void)
 		// Save this checkpoint
 		lastcount = shm->stats.op_count;
 		lasttime = tp.tv_sec;
-	} else if (time_diff >= 60 && all_stalled == FALSE) {
-		// Indeed stalled for 60s, but `is_child_making_progress` said no
+	} else if (time_diff >= 90 && all_stalled == FALSE) {
+		// Indeed stalled for 90s, but `is_child_making_progress` said no
 		// This is likely a bug of Trinity, or we trigerred some kernel bug
-		output(0, "Children is making 0 progress for 60 seconds, "
+		output(0, "Children is making 0 progress for 90 seconds, "
 			"but we only have %u stalled process(es), and\n"
 			"  %u empty slot(s)\n"
 			"  %u process(es) that can't be locked\n"
