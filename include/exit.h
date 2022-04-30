@@ -44,8 +44,8 @@ static const char *reasons[NUM_EXIT_REASONS] = {
   "fork() failure",
   "some kind of locking catastrophe",
   "error while opening logfiles",
-	"Something impossible happened (could be caused by memory corruption).",
-	"Possible bug with Trinity detected.",
+	"something impossible happened (could be caused by memory corruption)",
+	"possible bug with Trinity detected",
 };
 
 static inline const char * decode_exit(enum exit_reasons reason)
