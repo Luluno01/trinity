@@ -13,7 +13,10 @@
 #include <arpa/inet.h>  // struct in_addr
 #include "kcov.h"
 #include "types.h"
+#include "locks.h"
 
+
+#define CHECK_SEND_LOCK 1
 
 int kcovfd;
 /**
@@ -22,7 +25,34 @@ int kcovfd;
 int kcovDumpFd;
 
 unsigned long *cover;
+#if CHECK_SEND_LOCK
+/**
+ * One coverage server connection is supposed to be bound to only one thread,
+ * (and Trinity use one thread in one child process, right?) but sometimes the
+ * thread behaves really weird - the sending cursor shifts back and forth by 4
+ * or 1 bytes, resulting in wrong PC values like 0xffff81001156 (an extra byte
+ * `0x56`), 0xffff810011ff (an extra byte `0xff`, or 1 lower byte skipped)
+ * 0x8100112281002233 (4 higher bytes `0xffffffff` skipped after sending the
+ * lower bytes `0x81002233`), or 0x81001122ffffffff (4 lower bytes in previous
+ * PC value skipped)
+ * 
+ * The true reason is still unknown, but let's use this to detect and abort on
+ * any violation of our assumption
+ * 
+ * And, one more thing, the implementation of this lock is not a true lock but
+ * still kind of works in this case
+ */
+lock_t send_lock = {
+	.lock = UNLOCKED,
+	.owner = 0
+};
+#endif
 unsigned long last_cover_count = 0;
+/**
+ * Not really a guard, but hopefully when we see this in the coverage, we know
+ * there was an underflow
+ */
+unsigned long guard = 0xdeadbeaf;
 unsigned long last_cover[COVER_SIZE];
 bool enabled = FALSE;
 
@@ -40,7 +70,7 @@ void init_kcov(void)
 	kcovfd = open("/sys/kernel/debug/kcov", O_RDWR);
 	if (kcovfd == -1) {
 		printf("Failed to open kcov file: %s\n", strerror(errno));
-		_exit(EXIT_FAILURE);
+		exit(EXIT_FAILURE);
 		return;
 	}
 
@@ -56,6 +86,7 @@ void init_kcov(void)
 		printf("Failed to mmap kcov buffer: %s\n", strerror(errno));
 		goto fail;
 	}
+	printf("kcov buffer: %p\n", cover);
 	
 	return;
 
@@ -151,10 +182,13 @@ void connect_cov_server(void) {
 	if ((cov_server_sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
 		printf("Cannot create socket: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
+		return;
 	}
+	printf("Coverage server socket: %d\n", cov_server_sock);
 	if (connect(cov_server_sock, &cov_server, sizeof(cov_server)) != 0) {
 		printf("Cannot connect to coverage server %s:%hu: %s\n", inet_ntoa(cov_server.sin_addr), ntohs(cov_server.sin_port), strerror(errno));
 		exit(EXIT_FAILURE);
+		return;
 	}
 }
 
@@ -167,18 +201,38 @@ void disconnect_cov_server(void) {
 	cov_server_sock = -1;
 }
 
+void send_all(int socket, void *buffer, size_t length) {
+	char *ptr = (char*) buffer;
+	while (length > 0) {
+		int i = send(socket, ptr, length, 0);
+		if (i < 1) {
+			printf("Cannot send coverage data via the socket: %s\n", strerror(errno));
+			exit(EXIT_FAILURE);
+		};
+		ptr += i;
+		length -= i;
+	}
+}
+
 /**
  * Send last coverage
  */
 void send_cov(void) {
-	char *cursor, *eof;
 	if (cov_server_sock == -1) {
 		printf("Coverage server is not connected\n");
 		exit(EXIT_FAILURE);
+		return;
 	}
+#if CHECK_SEND_LOCK
+	if (!trylock(&send_lock)) {
+		printf("send_cov: send_lock is unexpectedly locked! This pid=%d, owner=%d\n", getpid(), send_lock.owner);
+		exit(EXIT_FAILURE);
+	};
+#endif
 	if (last_cover_count <= 0) return;
-	cursor = (char*) last_cover;
-	eof = (char*) (last_cover + last_cover_count);
-	while ((cursor += write(cov_server_sock, cursor, eof - cursor)) < eof);
+	send_all(cov_server_sock, (void *) last_cover, last_cover_count * sizeof(unsigned long));
 	last_cover_count = 0;
+#if CHECK_SEND_LOCK
+	unlock(&send_lock);
+#endif
 }
